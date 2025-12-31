@@ -15,6 +15,12 @@ jobs:
         folder: [".", "examples/demo", "examples/opt-in"]
         version: ["7.1.0", "8.0.0"]
         os: ["ubuntu-latest"]
+        include:
+          # Since examples are not fully compatible with bazel 9 yet
+          # (due to usage of global py_* rules), only test root project for now
+          # with this version.
+          - folder: "."
+            version: "9.0.0rc3"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
