@@ -57,9 +57,10 @@ def managed_cache_dir(
 
 
 def run_mypy(
-    mypy_ini: Optional[str], cache_dir: str, srcs: list[str]
+    mypy_ini: Optional[str], junit_xml: Optional[str], cache_dir: str, srcs: list[str]
 ) -> tuple[str, str, int]:
     maybe_config = ["--config-file", mypy_ini] if mypy_ini else []
+    maybe_config += ["--junit-xml", junit_xml] if junit_xml else []
     report, errors, status = mypy.api.run(
         maybe_config
         + [
@@ -85,6 +86,7 @@ def run_mypy(
 
 def run(
     output: Optional[str],
+    junit_xml: Optional[str],
     cache_dir: Optional[str],
     upstream_caches: list[str],
     mypy_ini: Optional[str],
@@ -92,7 +94,7 @@ def run(
 ) -> None:
     if len(srcs) > 0:
         with managed_cache_dir(cache_dir, upstream_caches) as cache_dir:
-            report, errors, status = run_mypy(mypy_ini, cache_dir, srcs)
+            report, errors, status = run_mypy(mypy_ini, junit_xml, cache_dir, srcs)
     else:
         report, errors, status = "", "", 0
 
@@ -109,6 +111,7 @@ def run(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=False)
+    parser.add_argument("--junit-xml", required=False)
     parser.add_argument("-c", "--cache-dir", required=False)
     parser.add_argument("--upstream-cache", required=False, action="append")
     parser.add_argument("--mypy-ini", required=False)
@@ -116,12 +119,13 @@ def main() -> None:
     args = parser.parse_args()
 
     output: Optional[str] = args.output
+    junit_xml: Optional[str] = args.junit_xml
     cache_dir: Optional[str] = args.cache_dir
     upstream_cache: list[str] = args.upstream_cache or []
     mypy_ini: Optional[str] = args.mypy_ini
     srcs: list[str] = args.src
 
-    run(output, cache_dir, upstream_cache, mypy_ini, srcs)
+    run(output, junit_xml, cache_dir, upstream_cache, mypy_ini, srcs)
 
 
 if __name__ == "__main__":

@@ -182,19 +182,26 @@ def _mypy_impl(target, ctx):
     mypy_path = ctx.configuration.host_path_separator.join([x for x in path_components if not _should_ignore_import(x)])
 
     output_file = ctx.actions.declare_file(ctx.rule.attr.name + ".mypy_stdout")
+    junit_xml = ctx.actions.declare_file(ctx.rule.attr.name + ".mypy_junit.xml")
 
     args = ctx.actions.args()
     args.add("--output", output_file)
+    args.add("--junit-xml", junit_xml)
 
-    result_info = [OutputGroupInfo(mypy = depset([output_file]))]
+    result_info = [
+        OutputGroupInfo(
+            mypy = depset([output_file]),
+            mypy_xml = depset([junit_xml]),
+        ),
+    ]
     if ctx.attr.cache:
         cache_directory = ctx.actions.declare_directory(ctx.rule.attr.name + ".mypy_cache")
         args.add("--cache-dir", cache_directory.path)
 
-        outputs = [output_file, cache_directory]
+        outputs = [output_file, junit_xml, cache_directory]
         result_info.append(MypyCacheInfo(directory = cache_directory))
     else:
-        outputs = [output_file]
+        outputs = [output_file, junit_xml]
 
     args.add_all([c.path for c in upstream_caches], before_each = "--upstream-cache")
     args.add_all(lintable_srcs)
