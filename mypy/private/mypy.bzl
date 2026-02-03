@@ -65,8 +65,7 @@ def _opt_in(opt_in_tags, rule_tags):
     return False
 
 def _mypy_impl(target, ctx):
-    # skip non-root targets
-    if target.label.workspace_root != "":
+    if not ctx.attr._run_outside_root and target.label.workspace_root != "":
         return []
 
     if RulesPythonPyInfo not in target and PyInfo not in target:
@@ -236,7 +235,8 @@ def mypy(
         cache = True,
         color = True,
         suppression_tags = None,
-        opt_in_tags = None):
+        opt_in_tags = None,
+        run_outside_root = False):
     """
     Create a mypy target inferring upstream caches from deps.
 
@@ -260,6 +260,9 @@ def mypy(
         opt_in_tags: (optional, default []) tags that must be present for mypy to run
                     on a particular target. When specified, this ruleset will _only_
                     run on targets with this tag.
+        run_outside_root: (optional, default False) Should the aspect run on targets
+                    outside the root module? Usually this should only be used in
+                    combination with opt_in_tags.
 
     Returns:
         a mypy aspect.
@@ -288,6 +291,7 @@ def mypy(
             "_types_values": attr.label_list(default = types.values()),
             "_suppression_tags": attr.string_list(default = suppression_tags or ["no-mypy"]),
             "_opt_in_tags": attr.string_list(default = opt_in_tags or []),
+            "_run_outside_root": attr.bool(default = run_outside_root),
             "cache": attr.bool(default = cache),
             "color": attr.bool(default = color),
         },
