@@ -266,8 +266,6 @@ def mypy(
     """
     types = types or {}
 
-    additional_attrs = {}
-
     return aspect(
         implementation = _mypy_impl,
         attr_aspects = ["deps"],
@@ -292,7 +290,7 @@ def mypy(
             "_opt_in_tags": attr.string_list(default = opt_in_tags or []),
             "cache": attr.bool(default = cache),
             "color": attr.bool(default = color),
-        } | additional_attrs,
+        },
     )
 
 def mypy_cli(name, deps = None, mypy_requirement = None, python_version = "3.12", tags = None):
