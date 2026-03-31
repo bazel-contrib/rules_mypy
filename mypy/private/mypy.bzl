@@ -13,14 +13,7 @@ load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_info.bzl", RulesPythonPyInfo = "PyInfo")
 load(":py_type_library.bzl", "PyTypeLibraryInfo")
 
-# Bazel >= 9 does not have any auto-loaded rules (like PyInfo).
-# This line detects if we are in older Bazel and need to support
-# built-in python provider.
-BuiltinPyInfo = bazel_features.globals.PyInfo
-
-def _has_builtin_py_info(target):
-    """Returns true iff the target has a builtin py_info provider."""
-    return BuiltinPyInfo != None and BuiltinPyInfo in target
+_LegacyPyInfo = bazel_features.globals.PyInfo or RulesPythonPyInfo
 
 MypyCacheInfo = provider(
     doc = "Output details of the mypy build rule.",
@@ -41,8 +34,8 @@ def _extract_import_dir(import_):
 def _imports(target):
     if RulesPythonPyInfo in target:
         return target[RulesPythonPyInfo].imports.to_list()
-    elif _has_builtin_py_info(target):
-        return target[BuiltinPyInfo].imports.to_list()
+    elif _LegacyPyInfo in target:
+        return target[_LegacyPyInfo].imports.to_list()
     else:
         return []
 
@@ -79,7 +72,7 @@ def _mypy_impl(target, ctx):
     if target.label.workspace_root != "":
         return []
 
-    if not (RulesPythonPyInfo in target or _has_builtin_py_info(target)):
+    if RulesPythonPyInfo not in target and _LegacyPyInfo not in target:
         return []
 
     # disable if a target is tagged with at least one suppression tag
