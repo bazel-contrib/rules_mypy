@@ -7,10 +7,13 @@ directories (the results of other mypy builds), the underlying action first atte
 directories.
 """
 
+load("@bazel_features//:features.bzl", "bazel_features")
 load("@rules_mypy_pip//:requirements.bzl", "requirement")
 load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_info.bzl", RulesPythonPyInfo = "PyInfo")
 load(":py_type_library.bzl", "PyTypeLibraryInfo")
+
+_LegacyPyInfo = bazel_features.globals.PyInfo or RulesPythonPyInfo
 
 MypyCacheInfo = provider(
     doc = "Output details of the mypy build rule.",
@@ -31,8 +34,8 @@ def _extract_import_dir(import_):
 def _imports(target):
     if RulesPythonPyInfo in target:
         return target[RulesPythonPyInfo].imports.to_list()
-    elif PyInfo in target:
-        return target[PyInfo].imports.to_list()
+    elif _LegacyPyInfo in target:
+        return target[_LegacyPyInfo].imports.to_list()
     else:
         return []
 
@@ -69,7 +72,7 @@ def _mypy_impl(target, ctx):
     if target.label.workspace_root != "":
         return []
 
-    if RulesPythonPyInfo not in target and PyInfo not in target:
+    if RulesPythonPyInfo not in target and _LegacyPyInfo not in target:
         return []
 
     # disable if a target is tagged with at least one suppression tag
