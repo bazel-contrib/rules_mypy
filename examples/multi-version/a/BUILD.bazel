@@ -1,0 +1,15 @@
+load("@rules_python//python:py_binary.bzl", "py_binary")
+load("@rules_uv//uv:pip.bzl", "pip_compile")
+
+pip_compile(
+    name = "generate_requirements_lock",
+    requirements_in = "requirements.in",
+    requirements_txt = "requirements.txt",
+)
+
+py_binary(
+    name = "a",
+    srcs = ["a.py"],
+    tags = ["typecheck_A"],
+    python_version = "3.10",
+)

@@ -1,0 +1,8 @@
+load("@rules_python//python:py_binary.bzl", "py_binary")
+load("@rules_uv//uv:pip.bzl", "pip_compile")
+
+py_binary(
+    name = "b",
+    srcs = ["b.py"],
+    python_version = "3.11",
+)

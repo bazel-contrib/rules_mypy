@@ -1,0 +1,36 @@
+"rules_mypy multi-version test case"
+
+module(
+    name = "rules_mypy_examples__multi_version",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_mypy", version = "0.0.0")
+bazel_dep(name = "rules_python", version = "1.1.0")
+bazel_dep(name = "rules_uv", version = "0.21.0")
+
+local_path_override(
+    module_name = "rules_mypy",
+    path = "../..",
+)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.10")
+python.toolchain(python_version = "3.11")
+use_repo(python, "python_3_10", "python_3_11")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "pip_A",
+    python_version = "3.10",
+    requirements_lock = "//a:requirements.txt",
+)
+use_repo(pip, "pip_A")
+
+types = use_extension("@rules_mypy//mypy:types.bzl", "types")
+types.requirements(
+    name = "pip_A_types",
+    pip_requirements = "@pip_A//:requirements.bzl",
+    requirements_txt = "//a:requirements.txt",
+)
+use_repo(types, "pip_A_types")
