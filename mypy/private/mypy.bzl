@@ -218,8 +218,8 @@ def _mypy_impl(target, ctx):
 
     py_type_files = [x for x in ctx.rule.files.data if x.basename == "py.typed" or x.extension == "pyi"]
     ctx.actions.run(
-        mnemonic = "mypy",
-        progress_message = "mypy %{label}",
+        mnemonic = "Mypy",
+        progress_message = "Checking Python types for %{label}",
         inputs = depset(
             direct = ctx.rule.files.srcs + py_type_files + pyi_files + upstream_caches + config_files,
             transitive = depsets,

@@ -16,6 +16,7 @@ def _py_type_library_impl(ctx):
 
     ctx.actions.run(
         mnemonic = "BuildPyTypeLibrary",
+        progress_message = "Building Python type library %{output}",
         inputs = depset(transitive = [ctx.attr.typing.default_runfiles.files]),
         outputs = [directory],
         executable = ctx.executable._exec,
