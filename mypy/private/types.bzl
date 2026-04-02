@@ -36,8 +36,17 @@ def _render_types_bzl(rctx, types):
     content += "}\n"
     return content
 
+def _get_requirements(rctx):
+    if rctx.attr.requirements_linux and "linux" in rctx.os.name:
+        return rctx.read(rctx.attr.requirements_linux)
+    if rctx.attr.requirements_windows and "windows" in rctx.os.name:
+        return rctx.read(rctx.attr.requirements_windows)
+    if rctx.attr.requirements_darwin and "mac os" in rctx.os.name:
+        return rctx.read(rctx.attr.requirements_darwin)
+    return rctx.read(rctx.attr.requirements_txt)
+
 def _generate_impl(rctx):
-    contents = rctx.read(rctx.attr.requirements_txt)
+    contents = _get_requirements(rctx)
 
     types = []
 
@@ -73,6 +82,9 @@ generate = repository_rule(
     attrs = {
         "pip_requirements": attr.label(),
         "requirements_txt": attr.label(allow_single_file = True),
+        "requirements_darwin": attr.label(allow_single_file = True),
+        "requirements_linux": attr.label(allow_single_file = True),
+        "requirements_windows": attr.label(allow_single_file = True),
         "exclude_requirements": attr.string_list(default = []),
     },
 )
