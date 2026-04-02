@@ -24,32 +24,19 @@ Setup is significantly easier with bzlmod, we recommend and predominantly suppor
 bazel_dep(name = "rules_mypy", version = "0.0.0")
 ```
 
-**Optionally, configure a types repository:**
-
-Many Python packages have separately published types/stubs packages. While mypy (and these rules) will work without including these types, this ruleset provides some utilities for leveraging these types to improve mypy's type checking.
-
-```starlark
-types = use_extension("@rules_mypy//mypy:types.bzl", "types")
-types.requirements(
-    name = "pip_types",
-    # `@pip` in the next line corresponds to the `hub_name` when using
-    # rules_python's `pip.parse(...)`.
-    pip_requirements = "@pip//:requirements.bzl",
-    # also legal to pass a `requirements.in` here
-    requirements_txt = "//:requirements.txt",
-)
-use_repo(types, "pip_types")
-```
-
 **Configure `mypy_aspect`.**
 
 Define a new aspect in a `.bzl` file (such as `./tools/aspects.bzl`):
 
 ```starlark
-load("@pip_types//:types.bzl", "types")
-load("@rules_mypy//mypy:mypy.bzl", "mypy")
+load("@pip//:requirements.bzl", "all_requirements", "requirement")
+load("@rules_mypy//mypy:mypy.bzl", "load_stubs", "mypy")
 
-mypy_aspect = mypy(types = types)
+stubs = load_stubs(
+    # See "Specifying stubs"
+)
+
+mypy_aspect = mypy(stubs = stubs)
 ```
 
 Update your `.bazelrc` to include this new aspect:
@@ -60,6 +47,64 @@ build --aspects //tools:aspects.bzl%mypy_aspect
 
 # optionally, default enable the mypy checks
 build --output_groups=+mypy
+```
+
+### Specifying stubs
+
+If a third-party library does not contain type hints, it likely has type stubs defined in a `types-somelib` or `somelib-stubs` library. If it does not, you will need to create your own [stub files](https://mypy.readthedocs.io/en/stable/stubs.html) for the dependency.
+
+Whether the stub files are provided by a `types-somelib` library or written yourself, Bazel needs to be told that typechecking your code depends on `types-somelib`. This can be done in one of two ways:
+
+1. Configure `rules_mypy` to automatically add `types-somelib` to the typechecking environment when it sees `somelib` as a dependency
+    * This is the recommended approach, and should be sufficient in most cases
+    * If any stubs libraries has dependencies (e.g. `types-boto3`), this approach will not work
+
+1. Add both `requirement("somelib")` and `requirement("types-somelib")` as dependencies
+
+The rest of this section will focus on the first approach, which is done via the `stubs` parameter to the `mypy()` aspect, which should be constructed with the `load_stubs()` helper.
+
+In the common case, a library has type hints provided at `types-<name>` or `<name>-stubs`; the `requirements` parameter to `load_stubs()` automatically detects these libraries:
+
+```starlark
+# load the requirements.bzl file from the repo you configured with pip.parse()
+load("@pip//:requirements.bzl", "all_requirements")
+
+stubs = load_stubs(requirements = all_requirements)
+```
+
+Some libraries have a different stubs library name, e.g. `grpc-stubs` is the stubs library for `grpcio`. These cases need to be manually specified:
+
+```starlark
+load("@pip//:requirements.bzl", "requirement")
+
+stubs = load_stubs(
+    overrides = {
+        requirement("grpcio"): requirement("grpc-stubs"),
+    },
+)
+```
+
+If you need to write your own stubs, you can define a new `py_library` target and specify it in `load_stubs`:
+
+```starlark
+# stubs/BUILD.bazel
+
+load("@rules_python//python:py_library.bzl", "py_library")
+
+py_library(
+    name = "kafka-python",
+    imports = ["."],
+    pyi_srcs = ["kafka/__init__.pyi"],
+    visibility = ["//visibility:public"],
+)
+
+# aspects.bzl
+
+stubs = load_stubs(
+    overrides = {
+        requirement("kafka-python"): "@@//stubs:kafka-python",
+    },
+)
 ```
 
 ## Customizing mypy

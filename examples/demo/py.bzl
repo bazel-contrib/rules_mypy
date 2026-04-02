@@ -1,6 +1,14 @@
 "Custom py_library rule that also runs mypy."
 
-load("@pip_types//:types.bzl", "types")
-load("@rules_mypy//mypy:mypy.bzl", "mypy")
+load("@pip//:requirements.bzl", "all_requirements", "requirement")
+load("@rules_mypy//mypy:mypy.bzl", "load_stubs", "mypy")
 
-mypy_aspect = mypy(types = types)
+stubs = load_stubs(
+    requirements = all_requirements,
+    overrides = {
+        # See manual_stubs/implicit/
+        requirement("six"): "@@//manual_stubs/implicit:foo-stubs",
+    },
+)
+
+mypy_aspect = mypy(stubs = stubs)

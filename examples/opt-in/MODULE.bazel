@@ -37,11 +37,3 @@ pip.parse(
     },
 )
 use_repo(pip, "pip")
-
-types = use_extension("@rules_mypy//mypy:types.bzl", "types")
-types.requirements(
-    name = "pip_types",
-    pip_requirements = "@pip//:requirements.bzl",
-    requirements_txt = "//:requirements.txt",
-)
-use_repo(types, "pip_types")

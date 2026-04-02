@@ -11,7 +11,6 @@ load("@bazel_features//:features.bzl", "bazel_features")
 load("@rules_mypy_pip//:requirements.bzl", "requirement")
 load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_info.bzl", RulesPythonPyInfo = "PyInfo")
-load(":py_type_library.bzl", "PyTypeLibraryInfo")
 
 _LegacyPyInfo = bazel_features.globals.PyInfo or RulesPythonPyInfo
 
@@ -109,12 +108,12 @@ def _mypy_impl(target, ctx):
 
     upstream_caches = []
 
-    types = []
+    stubs_deps = []
 
     depsets = []
 
-    type_mapping = dict(zip([k.label for k in ctx.attr._types_keys], ctx.attr._types_values))
-    dep_with_stubs = [_.label.workspace_root + "/site-packages" for _ in ctx.attr._types_keys]
+    type_mapping = dict(zip([k.label for k in ctx.attr._stubs_keys], ctx.attr._stubs_values))
+    dep_with_stubs = [_.label.workspace_root + "/site-packages" for _ in ctx.attr._stubs_keys]
     additional_types = [
         type_mapping[dep.label]
         for dep in ctx.rule.attr.deps
@@ -131,10 +130,15 @@ def _mypy_impl(target, ctx):
             pyi_files.extend(dep[RulesPythonPyInfo].direct_pyi_files.to_list())
             pyi_dirs |= {"%s/%s" % (ctx.bin_dir.path, imp): None for imp in _extract_imports(dep) if imp != "site-packages" and imp != "_main"}
         depsets.append(dep.default_runfiles.files)
-        if PyTypeLibraryInfo in dep:
-            types.append(dep[PyTypeLibraryInfo].directory.path + "/site-packages")
-        elif dep.label in type_mapping:
+
+        if dep.label in type_mapping:
             continue
+
+        if dep.label.workspace_name == "":
+            for import_ in _extract_imports(dep):
+                imports_dirs[import_] = 1
+        elif dep in type_mapping.values():
+            stubs_deps.append(dep.label.workspace_root + "/site-packages")
         elif dep.label.workspace_root.startswith("external/"):
             # TODO: do we need this, still?
             external_deps[dep.label.workspace_root + "/site-packages"] = 1
@@ -142,9 +146,6 @@ def _mypy_impl(target, ctx):
                 path = "external/{}".format(imp)
                 if path not in dep_with_stubs:
                     external_deps[path] = 1
-        elif dep.label.workspace_name == "":
-            for import_ in _extract_imports(dep):
-                imports_dirs[import_] = 1
 
         if MypyCacheInfo in dep:
             upstream_caches.append(dep[MypyCacheInfo].directory)
@@ -172,9 +173,6 @@ def _mypy_impl(target, ctx):
         # output bin_dir from `generated_dirs` first
         # https://github.com/theoremlp/rules_mypy/issues/88
         ["."] +
-        # types need to appear first in the mypy path since the module directories
-        # are the same and mypy resolves the first ones, first.
-        sorted(types) +
         sorted(external_deps) +
         sorted(imports_dirs) +
         sorted(generated_dirs) +
@@ -227,7 +225,7 @@ def _mypy_impl(target, ctx):
         outputs = outputs,
         executable = ctx.executable._mypy_cli,
         arguments = [args],
-        env = {"MYPYPATH": mypy_path} | ctx.configuration.default_shell_env | extra_env,
+        env = {"MYPYPATH": mypy_path, "PYTHONPATH": ":".join(sorted(stubs_deps))} | ctx.configuration.default_shell_env | extra_env,
     )
 
     return result_info
@@ -235,7 +233,7 @@ def _mypy_impl(target, ctx):
 def mypy(
         mypy_cli = None,
         mypy_ini = None,
-        types = None,
+        stubs = None,
         cache = True,
         color = True,
         suppression_tags = None,
@@ -247,15 +245,7 @@ def mypy(
         mypy_cli:   (optional) a replacement mypy_cli to use (recommended to produce
                     with mypy_cli macro)
         mypy_ini:   (optional) mypy_ini file to use
-        types:      (optional) a dict of dependency label to types dependency label
-                    example:
-                    ```
-                    {
-                        requirement("cachetools"): requirement("types-cachetools"),
-                    }
-                    ```
-                    Use the types extension to create this map for a requirements.in
-                    or requirements.txt file.
+        stubs:      (optional) result from load_stubs()
         cache:      (optional, default True) propagate the mypy cache
         color:      (optional, default True) use color in mypy output
         suppression_tags: (optional, default ["no-mypy"]) tags that suppress running
@@ -267,8 +257,6 @@ def mypy(
     Returns:
         a mypy aspect.
     """
-    types = types or {}
-
     additional_attrs = {}
 
     return aspect(
@@ -289,13 +277,59 @@ def mypy(
             ),
             # pass the dict[Label, Label] in parts because Bazel doesn't have
             # this kind of attr to pass naturally
-            "_types_keys": attr.label_list(default = types.keys()),
-            "_types_values": attr.label_list(default = types.values()),
+            "_stubs_keys": attr.label_list(default = stubs.mapping.keys() if stubs else []),
+            "_stubs_values": attr.label_list(default = stubs.mapping.values() if stubs else []),
             "_suppression_tags": attr.string_list(default = suppression_tags or ["no-mypy"]),
             "_opt_in_tags": attr.string_list(default = opt_in_tags or []),
             "cache": attr.bool(default = cache),
             "color": attr.bool(default = color),
         } | additional_attrs,
+    )
+
+def _load_stubs_from_requirements(requirements):
+    # for a package "foo-bar", maps "foo_bar" to "@pip//foo_bar:pkg"
+    parsed_reqs = {}
+    for req in requirements:
+        parsed_reqs[Label(req).package] = req
+
+    stubs = {}
+    for req in requirements:
+        req_name = Label(req).package
+
+        if req_name.endswith("_stubs"):
+            base_req_name = req_name.removesuffix("_stubs")
+        elif req_name.startswith("types_"):
+            base_req_name = req_name.removeprefix("types_")
+        else:
+            continue
+
+        if base_req_name in parsed_reqs:
+            base_req = parsed_reqs[base_req_name]
+            stubs[base_req] = req
+
+    return stubs
+
+def load_stubs(requirements = [], overrides = {}):
+    """
+    Generate a mapping of labels to their stubs label. For example:
+
+    ```
+    {
+        requirement("cachetools"): requirement("types-cachetools"),
+    }
+    ```
+
+    This can be detected automatically via `requirements`, manually via `overrides`,
+    or a combination of both.
+
+    Args:
+        requirements: (optional) the full list of requirements from "@pip//:requirements.bzl"
+                      to automatically detect stubs from.
+        overrides:    (optional) explicitly specified stubs mapping
+    """
+    stubs = _load_stubs_from_requirements(requirements)
+    return struct(
+        mapping = stubs | overrides,
     )
 
 def mypy_cli(name, deps = None, mypy_requirement = None, python_version = "3.12", tags = None):

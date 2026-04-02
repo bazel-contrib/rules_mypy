@@ -5,15 +5,3 @@ bzl_library(
     srcs = ["mypy.bzl"],
     visibility = ["//visibility:public"],
 )
-
-bzl_library(
-    name = "py_type_library",
-    srcs = ["py_type_library.bzl"],
-    visibility = ["//visibility:public"],
-)
-
-bzl_library(
-    name = "types",
-    srcs = ["types.bzl"],
-    visibility = ["//visibility:public"],
-)
