@@ -70,13 +70,13 @@ mypy's behavior may be customized using a [mypy config file](https://mypy.readth
 
 ```starlark
 mypy_aspect = mypy(
-    mypy_ini = "@@//:mypy.ini",
+    mypy_ini = Label("//:mypy.ini"),
     types = types,
 )
 ```
 
 > [!NOTE]
-> The label passed to `mypy_ini` needs to be absolute (a prefix of `@@` means the root repo).
+> The label passed to `mypy_ini` is used across modules, so ensure you pass a `Label` (will be qualified relative to construction location) and not a regular string.
 
 > [!NOTE]
 > mypy.ini files should likely contain the following lines to suppress type-checking 3rd party modules.
@@ -107,7 +107,7 @@ And in your `aspects.bzl` (or similar) file:
 load("@rules_mypy//mypy:mypy.bzl", "mypy")
 
 mypy_aspect = mypy(
-    mypy_cli = ":mypy_cli",
+    mypy_cli = Label(":mypy_cli"),
     types = types,
 )
 ```
