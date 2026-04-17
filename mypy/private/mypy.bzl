@@ -87,11 +87,14 @@ def _mypy_impl(target, ctx):
     if not hasattr(ctx.rule.files, "srcs"):
         return []
 
-    # Exclude non-python sources from custom rules that return PyInfo
+    # Exclude non-python sources from custom rules that return PyInfo, and skip
+    # generated sources (e.g. py_console_script_binary entry-point shims and
+    # py_proto_library outputs) that users don't control and can't meaningfully
+    # type-check.
     lintable_srcs = [
         s
         for s in ctx.rule.files.srcs
-        if "/_virtual_imports/" not in s.short_path and s.extension in ("py", "pyi")
+        if "/_virtual_imports/" not in s.short_path and s.extension in ("py", "pyi") and s.is_source
     ]
     if not lintable_srcs:
         return []
