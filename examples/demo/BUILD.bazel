@@ -1,3 +1,4 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@rules_uv//uv:pip.bzl", "pip_compile")
 load("@rules_uv//uv:venv.bzl", "create_venv")
 
@@ -10,4 +11,13 @@ pip_compile(
 create_venv(
     name = "venv",
     requirements_txt = "requirements.txt",
+)
+
+bzl_library(
+    name = "py",
+    srcs = ["py.bzl"],
+    deps = [
+        "@pip_types//:types",
+        "@rules_mypy//mypy",
+    ],
 )

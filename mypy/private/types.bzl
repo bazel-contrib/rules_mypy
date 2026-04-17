@@ -14,11 +14,31 @@ def _render_build(rctx, types):
         pip_requirements = rctx.attr.pip_requirements,
     )
     content += """load("@rules_mypy//mypy:py_type_library.bzl", "py_type_library")\n"""
+    content += 'load({bzl_library_bzl}, "bzl_library")\n'.format(
+        bzl_library_bzl = repr(str(Label("@bazel_skylib//:bzl_library.bzl"))),
+    )
     for requirement in types:
         content += _PY_TYPE_LIBRARY_TEMPLATE.format(
             requirement = requirement,
             raw = requirement.removeprefix("types-").removesuffix("-stubs"),
         ) + "\n"
+    content += '''bzl_library(
+    name = "types",
+    srcs = ["types.bzl"],
+    deps = [":requirements"],
+    visibility = ["//visibility:public"],
+)
+
+bzl_library(
+    name = "requirements",
+    srcs = [{requirements_bzl}],
+    deps = [{pip_bzl}],
+    visibility = ["//visibility:private"],
+)
+'''.format(
+        requirements_bzl = repr(str(rctx.attr.pip_requirements)),
+        pip_bzl = repr(str(Label("@rules_python//python:pip_bzl"))),
+    )
     return content
 
 def _render_types_bzl(rctx, types):
