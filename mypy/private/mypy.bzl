@@ -166,6 +166,19 @@ def _mypy_impl(target, ctx):
         for import_ in imports_dirs.keys():
             generated_imports_dirs.append("{}/{}".format(generated_dir, import_))
 
+    mypypath_excludes = ctx.attr._mypypath_excludes
+    if mypypath_excludes:
+        filtered = {}
+        for k, v in external_deps.items():
+            excluded = False
+            for exc in mypypath_excludes:
+                if exc in k:
+                    excluded = True
+                    break
+            if not excluded:
+                filtered[k] = v
+        external_deps = filtered
+
     path_components = (
         # normally, mypy looks in the current directory last, but we explicitly want
         # to check the current directory first, to avoid issues where mypy finds the
@@ -216,6 +229,10 @@ def _mypy_impl(target, ctx):
         # force color on only works if TERM is set to something that supports color
         extra_env["TERM"] = "xterm-256color"
 
+    args.add("--mypy-path", mypy_path)
+    args.use_param_file("@%s", use_always = True)
+    args.set_param_file_format("multiline")
+
     py_type_files = [x for x in ctx.rule.files.data if x.basename == "py.typed" or x.extension == "pyi"]
     ctx.actions.run(
         mnemonic = "mypy",
@@ -227,7 +244,11 @@ def _mypy_impl(target, ctx):
         outputs = outputs,
         executable = ctx.executable._mypy_cli,
         arguments = [args],
-        env = {"MYPYPATH": mypy_path} | ctx.configuration.default_shell_env | extra_env,
+        env = ctx.configuration.default_shell_env | extra_env,
+        execution_requirements = {
+            "supports-workers": "1",
+            "requires-worker-protocol": "json",
+        },
     )
 
     return result_info
@@ -239,7 +260,8 @@ def mypy(
         cache = True,
         color = True,
         suppression_tags = None,
-        opt_in_tags = None):
+        opt_in_tags = None,
+        mypypath_excludes = None):
     """
     Create a mypy target inferring upstream caches from deps.
 
@@ -263,6 +285,9 @@ def mypy(
         opt_in_tags: (optional, default []) tags that must be present for mypy to run
                     on a particular target. When specified, this ruleset will _only_
                     run on targets with this tag.
+        mypypath_excludes: (optional, default []) substrings to filter from MYPYPATH
+                    entries. Any external_dep path containing one of these substrings
+                    is dropped before passing MYPYPATH to mypy.
 
     Returns:
         a mypy aspect.
@@ -293,6 +318,7 @@ def mypy(
             "_types_values": attr.label_list(default = types.values()),
             "_suppression_tags": attr.string_list(default = suppression_tags or ["no-mypy"]),
             "_opt_in_tags": attr.string_list(default = opt_in_tags or []),
+            "_mypypath_excludes": attr.string_list(default = mypypath_excludes or []),
             "cache": attr.bool(default = cache),
             "color": attr.bool(default = color),
         } | additional_attrs,

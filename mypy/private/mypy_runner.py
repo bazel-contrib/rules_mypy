@@ -1,5 +1,9 @@
 import argparse
+import atexit
 import contextlib
+import json
+import multiprocessing
+import multiprocessing.context
 import pathlib
 import os
 import shutil
@@ -83,45 +87,230 @@ def run_mypy(
     return report, errors, status
 
 
-def run(
+def _execute(
     output: Optional[str],
     cache_dir: Optional[str],
     upstream_caches: list[str],
     mypy_ini: Optional[str],
+    mypy_path: Optional[str],
     srcs: list[str],
-) -> None:
+) -> tuple[int, str]:
+    """Run mypy and return (exit_code, combined_output). Does not call hard_exit."""
+    if mypy_path is not None:
+        os.environ["MYPYPATH"] = mypy_path
+    elif "MYPYPATH" in os.environ:
+        del os.environ["MYPYPATH"]
+
     if len(srcs) > 0:
         with managed_cache_dir(cache_dir, upstream_caches) as cache_dir:
             report, errors, status = run_mypy(mypy_ini, cache_dir, srcs)
     else:
         report, errors, status = "", "", 0
 
+    # Only emit anything when mypy reports an error: otherwise Bazel prints a
+    # "INFO: From mypy //target:" header followed by "Success: no issues found
+    # in N source files" for every action, which drowns out real signal in
+    # //... builds. collect_mypy treats an empty file as a passing target.
+    combined = errors + report if status else ""
     if output:
         with open(output, "w+") as file:
-            file.write(errors)
-            file.write(report)
+            file.write(combined)
 
+    return status, combined
+
+
+def run(
+    output: Optional[str],
+    cache_dir: Optional[str],
+    upstream_caches: list[str],
+    mypy_ini: Optional[str],
+    mypy_path: Optional[str],
+    srcs: list[str],
+) -> None:
+    status, _ = _execute(output, cache_dir, upstream_caches, mypy_ini, mypy_path, srcs)
     # use mypy's hard_exit to exit without freeing objects, it can be meaningfully
     # faster than an orderly shutdown
     mypy.util.hard_exit(status)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
+def _make_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
     parser.add_argument("--output", required=False)
     parser.add_argument("-c", "--cache-dir", required=False)
     parser.add_argument("--upstream-cache", required=False, action="append")
     parser.add_argument("--mypy-ini", required=False)
+    parser.add_argument("--mypy-path", required=False)
     parser.add_argument("src", nargs="*")
+    return parser
+
+
+def _expand_flagfile(arguments: list[str]) -> list[str]:
+    if len(arguments) == 1 and arguments[0].startswith("@"):
+        return pathlib.Path(arguments[0][1:]).read_text().splitlines()
+    return arguments
+
+
+def _execute_inline(args: argparse.Namespace, sandbox_dir: str) -> tuple[int, str]:
+    """Run mypy in the worker process itself (no fork)."""
+    cwd = os.getcwd()
+    try:
+        if sandbox_dir:
+            os.chdir(sandbox_dir)
+        try:
+            return _execute(
+                args.output,
+                args.cache_dir,
+                args.upstream_cache or [],
+                args.mypy_ini,
+                args.mypy_path,
+                args.src,
+            )
+        except BaseException as e:  # noqa: BLE001
+            return 1, f"{type(e).__name__}: {e}"
+    finally:
+        os.chdir(cwd)
+
+
+def _mp_context() -> Optional[multiprocessing.context.ForkContext]:
+    """Return a fork-based multiprocessing context, or None when fork isn't available.
+
+    Forking is required: spawn / forkserver re-exec Python and rebuild the
+    parent's typeshed + mypy module state on every request, defeating the
+    persistent-worker speedup. multiprocessing.Process under the fork context
+    runs the child to completion and then calls os._exit, which skips the
+    parent's atexit cache-cleanup in the child.
+    """
+    if not hasattr(os, "fork"):
+        return None
+    try:
+        return multiprocessing.get_context("fork")
+    except ValueError:
+        return None
+
+
+def _child_entry(
+    args: argparse.Namespace,
+    sandbox_dir: str,
+    queue: "multiprocessing.Queue[tuple[int, str]]",
+) -> None:
+    try:
+        if sandbox_dir:
+            os.chdir(sandbox_dir)
+        result = _execute(
+            args.output,
+            args.cache_dir,
+            args.upstream_cache or [],
+            args.mypy_ini,
+            args.mypy_path,
+            args.src,
+        )
+    except BaseException as e:  # noqa: BLE001
+        result = (1, f"{type(e).__name__}: {e}")
+    queue.put(result)
+
+
+def _execute_in_child(args: argparse.Namespace, sandbox_dir: str) -> tuple[int, str]:
+    """Run mypy in a forked child so parent RSS stays small."""
+    ctx = _mp_context()
+    if ctx is None:
+        return _execute_inline(args, sandbox_dir)
+
+    queue: "multiprocessing.Queue[tuple[int, str]]" = ctx.Queue()
+    proc = ctx.Process(target=_child_entry, args=(args, sandbox_dir, queue))
+    proc.start()
+    try:
+        result = queue.get()
+    finally:
+        proc.join()
+    return result
+
+
+_PERSISTENT_CACHE_DIR: Optional[str] = None
+_SIGNAL_HANDLERS_INSTALLED = False
+_MIN_PERSISTENT_CACHE_FREE_BYTES = 1 << 30  # 1 GiB
+
+
+def _cleanup_persistent_cache() -> None:
+    """Wipe this worker's tmpfs cache on exit (atexit / signal handler)."""
+    if _PERSISTENT_CACHE_DIR is None:
+        return
+    shutil.rmtree(_PERSISTENT_CACHE_DIR, ignore_errors=True)
+
+
+def _install_signal_handlers() -> None:
+    """Convert SIGTERM / SIGINT into sys.exit so atexit handlers run."""
+    global _SIGNAL_HANDLERS_INSTALLED
+    if _SIGNAL_HANDLERS_INSTALLED:
+        return
+    import signal as _signal
+
+    def _on_signal(signum: int, frame: Any) -> None:  # noqa: ARG001
+        sys.exit(128 + signum)
+
+    for sig in (_signal.SIGTERM, _signal.SIGINT, _signal.SIGHUP):
+        try:
+            _signal.signal(sig, _on_signal)
+        except (OSError, ValueError):
+            pass
+    _SIGNAL_HANDLERS_INSTALLED = True
+
+
+def _persistent_cache_dir() -> Optional[str]:
+    """Per-worker mypy cache dir on tmpfs; None if too small for an incremental cache."""
+    global _PERSISTENT_CACHE_DIR
+    if _PERSISTENT_CACHE_DIR is not None:
+        return _PERSISTENT_CACHE_DIR
+    base = os.environ.get("MYPY_WORKER_CACHE_BASE", "/dev/shm")
+    try:
+        st = os.statvfs(base)
+    except OSError:
+        return None
+    if st.f_bavail * st.f_frsize < _MIN_PERSISTENT_CACHE_FREE_BYTES:
+        return None
+    cache_dir = f"{base}/mypy-worker-{os.getpid()}"
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError:
+        return None
+    _PERSISTENT_CACHE_DIR = cache_dir
+    atexit.register(_cleanup_persistent_cache)
+    _install_signal_handlers()
+    return cache_dir
+
+
+def _worker_loop() -> None:
+    parser = _make_parser()
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        request = json.loads(line)
+        request_id = request.get("requestId", 0)
+        sandbox_dir = request.get("sandboxDir", "")
+        args = parser.parse_args(_expand_flagfile(request.get("arguments", [])))
+
+        # Override the per-action tempdir cache_dir with our persistent one.
+        cache_override = _persistent_cache_dir()
+        if cache_override is not None:
+            args.cache_dir = cache_override
+
+        status, output_text = _execute_in_child(args, sandbox_dir)
+
+        sys.stdout.write(
+            json.dumps({"exitCode": status, "output": output_text, "requestId": request_id}) + "\n"
+        )
+        sys.stdout.flush()
+
+
+def main() -> None:
+    if "--persistent_worker" in sys.argv:
+        _worker_loop()
+        return
+
+    parser = _make_parser()
     args = parser.parse_args()
 
-    output: Optional[str] = args.output
-    cache_dir: Optional[str] = args.cache_dir
-    upstream_cache: list[str] = args.upstream_cache or []
-    mypy_ini: Optional[str] = args.mypy_ini
-    srcs: list[str] = args.src
-
-    run(output, cache_dir, upstream_cache, mypy_ini, srcs)
+    run(args.output, args.cache_dir, args.upstream_cache or [], args.mypy_ini, args.mypy_path, args.src)
 
 
 if __name__ == "__main__":
