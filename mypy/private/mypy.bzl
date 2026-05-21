@@ -2,9 +2,9 @@
 mypy aspect.
 
 The mypy aspect runs mypy, succeeding if mypy is error free and failing if mypy produces errors. The
-result of the aspect is a mypy cache directory, located at [name].mypy_cache. When provided input cache
-directories (the results of other mypy builds), the underlying action first attempts to merge the cache
-directories.
+result of the aspect is a mypy cache zip file, located at [name].mypy_cache.zip. When provided input
+cache zip files (the results of other mypy builds), the underlying action first attempts to merge the
+caches.
 """
 
 load("@bazel_features//:features.bzl", "bazel_features")
@@ -18,7 +18,7 @@ _LegacyPyInfo = bazel_features.globals.PyInfo or RulesPythonPyInfo
 MypyCacheInfo = provider(
     doc = "Output details of the mypy build rule.",
     fields = {
-        "directory": "Location of the mypy cache produced by this target.",
+        "zip_file": "Location of the mypy cache zip file produced by this target.",
     },
 )
 
@@ -147,7 +147,7 @@ def _mypy_impl(target, ctx):
                 imports_dirs[import_] = 1
 
         if MypyCacheInfo in dep:
-            upstream_caches.append(dep[MypyCacheInfo].directory)
+            upstream_caches.append(dep[MypyCacheInfo].zip_file)
 
         for file in dep.default_runfiles.files.to_list():
             root = file.root.path
@@ -191,11 +191,11 @@ def _mypy_impl(target, ctx):
 
     result_info = [OutputGroupInfo(mypy = depset([output_file]))]
     if ctx.attr.cache:
-        cache_directory = ctx.actions.declare_directory(ctx.rule.attr.name + ".mypy_cache")
-        args.add("--cache-dir", cache_directory.path)
+        output_cache = ctx.actions.declare_file(ctx.rule.attr.name + ".mypy_cache.zip")
+        args.add("--output-cache", output_cache.path)
 
-        outputs = [output_file, cache_directory]
-        result_info.append(MypyCacheInfo(directory = cache_directory))
+        outputs = [output_file, output_cache]
+        result_info.append(MypyCacheInfo(zip_file = output_cache))
     else:
         outputs = [output_file]
 
