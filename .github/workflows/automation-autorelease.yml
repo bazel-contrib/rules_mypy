@@ -17,7 +17,7 @@ jobs:
           app-id: ${{ secrets.THM_AUTOMATION_APP_ID }}
           private-key: ${{ secrets.THM_AUTOMATION_PRIVATE_KEY }}
       - name: autorelease
-        uses: markelliot/autorelease@v2
+        uses: markelliot/autorelease@v3
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           max-days: 7
