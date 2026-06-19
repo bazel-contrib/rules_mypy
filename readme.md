@@ -7,9 +7,6 @@ Compared to [bazel-mypy-integration](https://github.com/bazel-contrib/bazel-mypy
 - Propagation of the mypy cache between dependencies within a repository to avoid exponential type-checking work
 - Robust (and automated) support for including 3rd party types/stubs packages
 
-> [!WARNING]  
-> rules_mypy's build actions produce mypy caches as outputs, and these may contain large file counts and that will only grow as a dependency chain grows. This may have an impact on the size and usage of build and/or remote caches.
-
 ## Usage
 
 This aspect will run over any `py_binary`, `py_library` or `py_test`.
@@ -150,6 +147,19 @@ load("@rules_mypy//mypy:mypy.bzl", "mypy")
 
 mypy_aspect = mypy(
     opt_in_tags = ["typecheck"],
+    types = types,
+)
+```
+
+## Cache compression
+
+Compression level for the cache zip files can be configured with the `zip_compress_level` parameter (0 = no compression, 9 = maximum compression, default 1):
+
+```starlark
+load("@rules_mypy//mypy:mypy.bzl", "mypy")
+
+mypy_aspect = mypy(
+    zip_compress_level = 0,
     types = types,
 )
 ```

@@ -2,9 +2,9 @@
 mypy aspect.
 
 The mypy aspect runs mypy, succeeding if mypy is error free and failing if mypy produces errors. The
-result of the aspect is a mypy cache directory, located at [name].mypy_cache. When provided input cache
-directories (the results of other mypy builds), the underlying action first attempts to merge the cache
-directories.
+result of the aspect is a mypy cache zip file, located at [name].mypy_cache.zip. When provided input
+cache zip files (the results of other mypy builds), the underlying action first attempts to merge the
+caches.
 """
 
 load("@bazel_features//:features.bzl", "bazel_features")
@@ -18,7 +18,7 @@ _LegacyPyInfo = bazel_features.globals.PyInfo or RulesPythonPyInfo
 MypyCacheInfo = provider(
     doc = "Output details of the mypy build rule.",
     fields = {
-        "directory": "Location of the mypy cache produced by this target.",
+        "zip_files": "Depset of cache zip files (this target and transitive deps).",
     },
 )
 
@@ -107,7 +107,7 @@ def _mypy_impl(target, ctx):
     # generated dirs
     generated_dirs = {}
 
-    upstream_caches = []
+    upstream_cache_depsets = []
 
     types = []
 
@@ -147,7 +147,7 @@ def _mypy_impl(target, ctx):
                 imports_dirs[import_] = 1
 
         if MypyCacheInfo in dep:
-            upstream_caches.append(dep[MypyCacheInfo].directory)
+            upstream_cache_depsets.append(dep[MypyCacheInfo].zip_files)
 
         for file in dep.default_runfiles.files.to_list():
             root = file.root.path
@@ -186,16 +186,22 @@ def _mypy_impl(target, ctx):
 
     output_file = ctx.actions.declare_file(ctx.rule.attr.name + ".mypy_stdout")
 
+    upstream_caches = depset(transitive = upstream_cache_depsets).to_list()
+
     args = ctx.actions.args()
     args.add("--output", output_file)
+    args.add("--zip-compress-level", ctx.attr._zip_compress_level)
 
     result_info = [OutputGroupInfo(mypy = depset([output_file]))]
     if ctx.attr.cache:
-        cache_directory = ctx.actions.declare_directory(ctx.rule.attr.name + ".mypy_cache")
-        args.add("--cache-dir", cache_directory.path)
+        output_cache = ctx.actions.declare_file(ctx.rule.attr.name + ".mypy_cache.zip")
+        args.add("--output-cache", output_cache.path)
 
-        outputs = [output_file, cache_directory]
-        result_info.append(MypyCacheInfo(directory = cache_directory))
+        outputs = [output_file, output_cache]
+        result_info.append(MypyCacheInfo(zip_files = depset(
+            direct = [output_cache],
+            transitive = upstream_cache_depsets,
+        )))
     else:
         outputs = [output_file]
 
@@ -238,6 +244,7 @@ def mypy(
         types = None,
         cache = True,
         color = True,
+        zip_compress_level = 1,
         suppression_tags = None,
         opt_in_tags = None):
     """
@@ -258,6 +265,8 @@ def mypy(
                     or requirements.txt file.
         cache:      (optional, default True) propagate the mypy cache
         color:      (optional, default True) use color in mypy output
+        zip_compress_level: (optional, default 1) deflate compression level for cache zips
+                    (0 = no compression, 9 = maximum compression)
         suppression_tags: (optional, default ["no-mypy"]) tags that suppress running
                     mypy on a particular target.
         opt_in_tags: (optional, default []) tags that must be present for mypy to run
@@ -295,6 +304,7 @@ def mypy(
             "_opt_in_tags": attr.string_list(default = opt_in_tags or []),
             "cache": attr.bool(default = cache),
             "color": attr.bool(default = color),
+            "_zip_compress_level": attr.int(default = zip_compress_level),
         } | additional_attrs,
     )
 
