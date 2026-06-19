@@ -30,6 +30,8 @@ def _sorted_file_list(root: pathlib.Path) -> list[pathlib.PurePath]:
 def _deterministic_zip(
     src_dir: str,
     dst_zip: str,
+    exclude: set[pathlib.PurePath],
+    zip_compress_level: int,
 ) -> None:
     """
     Create a deterministic zip archive of src_dir at dst_zip.
@@ -46,6 +48,8 @@ def _deterministic_zip(
 
     with zipfile.ZipFile(dst_zip_path, mode="w") as zf:
         for relative_path in _sorted_file_list(src_path):
+            if relative_path in exclude:
+                continue
             full_path = src_path / relative_path
 
             info = zipfile.ZipInfo(filename=relative_path.as_posix())
@@ -54,36 +58,39 @@ def _deterministic_zip(
             zf.writestr(
                 info,
                 full_path.read_bytes(),
-                compress_type=zipfile.ZIP_STORED,
-                compresslevel=None,
+                compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=zip_compress_level,
             )
 
 
-def _merge_upstream_caches(cache_dir: str, upstream_caches: list[str]) -> None:
+def _merge_upstream_caches(cache_dir: str, upstream_caches: list[str]) -> set[pathlib.PurePath]:
     current = pathlib.Path(cache_dir)
-    current.mkdir(parents=True, exist_ok=True)
+    created_dirs: set[pathlib.Path] = {current}
+    unpacked_files: set[pathlib.PurePath] = set()
 
     for upstream_zip in upstream_caches:
-        # TODO(mark): maybe there's a more efficient way to synchronize the cache dirs?
         with zipfile.ZipFile(upstream_zip, "r") as zf:
             for info in zf.infolist():
                 relative_path = pathlib.PurePath(info.filename)
+                if relative_path.parts[0] == "missing_stubs" or relative_path in unpacked_files:
+                    continue
+
                 target_path = current / relative_path
-                target_path.parent.mkdir(parents=True, exist_ok=True)
+                parent_dir = target_path.parent
+                if parent_dir not in created_dirs:
+                    parent_dir.mkdir(parents=True, exist_ok=True)
+                    created_dirs.add(parent_dir)
 
-                if not target_path.exists():
-                    with zf.open(info, "r") as src, target_path.open("wb") as dst:
-                        shutil.copyfileobj(src, dst)
+                with zf.open(info, "r") as src, target_path.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                unpacked_files.add(relative_path)
 
-    # missing_stubs is mutable, so remove it
-    missing_stubs = current / "missing_stubs"
-    if missing_stubs.exists():
-        missing_stubs.unlink()
+    return unpacked_files
 
 
 @contextlib.contextmanager
 def managed_cache_dir(
-    output_cache: Optional[str], upstream_caches: list[str]
+    output_cache: Optional[str], upstream_caches: list[str], zip_compress_level: int,
 ) -> Iterator[str]:
     """
     Returns a managed cache directory.
@@ -92,10 +99,10 @@ def managed_cache_dir(
     When output_cache is not None, on context exit will create a single zip file there with contents of managed cache.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
-        _merge_upstream_caches(tmpdir, upstream_caches)
+        upstream_files = _merge_upstream_caches(tmpdir, upstream_caches)
         yield tmpdir
         if output_cache:
-            _deterministic_zip(tmpdir, output_cache)
+            _deterministic_zip(tmpdir, output_cache, upstream_files, zip_compress_level)
 
 
 def run_mypy(
@@ -130,10 +137,11 @@ def run(
     output_cache: Optional[str],
     upstream_caches: list[str],
     mypy_ini: Optional[str],
+    zip_compress_level: int,
     srcs: list[str],
 ) -> None:
     if srcs:
-        with managed_cache_dir(output_cache, upstream_caches) as cache_dir:
+        with managed_cache_dir(output_cache, upstream_caches, zip_compress_level) as cache_dir:
             report, errors, status = run_mypy(mypy_ini, cache_dir, srcs)
     else:
         report, errors, status = "", "", 0
@@ -154,6 +162,7 @@ def main() -> None:
     parser.add_argument("--output-cache", required=False)
     parser.add_argument("--upstream-cache", required=False, action="append")
     parser.add_argument("--mypy-ini", required=False)
+    parser.add_argument("--zip-compress-level", required=False, type=int, default=1)
     parser.add_argument("src", nargs="*")
     args = parser.parse_args()
 
@@ -161,9 +170,10 @@ def main() -> None:
     output_cache: Optional[str] = args.output_cache
     upstream_cache: list[str] = args.upstream_cache or []
     mypy_ini: Optional[str] = args.mypy_ini
+    zip_compress_level: int = args.zip_compress_level
     srcs: list[str] = args.src
 
-    run(output, output_cache, upstream_cache, mypy_ini, srcs)
+    run(output, output_cache, upstream_cache, mypy_ini, zip_compress_level, srcs)
 
 
 if __name__ == "__main__":
