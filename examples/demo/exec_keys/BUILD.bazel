@@ -1,0 +1,46 @@
+load("@rules_python//python:defs.bzl", "py_library")
+load(":other_platform.bzl", "other_platform")
+
+constraint_setting(
+    name = "variant",
+    default_constraint_value = ":default",
+)
+
+constraint_value(
+    name = "default",
+    constraint_setting = ":variant",
+)
+
+constraint_value(
+    name = "other",
+    constraint_setting = ":variant",
+)
+
+config_setting(
+    name = "is_default",
+    constraint_values = [":default"],
+)
+
+platform(
+    name = "other_platform",
+    constraint_values = [":other"],
+    parents = ["@platforms//host"],
+)
+
+# A types key that only analyses on the default platform.
+alias(
+    name = "pkg",
+    actual = select({":is_default": "@pip//cachetools"}),
+    visibility = ["//:__subpackages__"],
+)
+
+py_library(
+    name = "lib",
+    srcs = ["lib.py"],
+)
+
+# Checks :lib on :other_platform, where :pkg doesn't analyse.
+other_platform(
+    name = "lib_on_other_platform",
+    deps = [":lib"],
+)
