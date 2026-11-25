@@ -2,11 +2,25 @@ load("@rules_python//python:py_binary.bzl", "py_binary")
 
 # The stubs of a generated module come from another package than the module itself, as with
 # protobuf's py_proto_library and separately generated .pyi files. mypy has to pick the stubs:
-# the generated module defines VALUE in a way mypy can't see.
+# the generated module defines VALUE in a way mypy can't see. The stubs in root_stubs live
+# below the repository root, which must not let the generated module shadow the other stubs.
 py_binary(
     name = "main",
     srcs = ["main.py"],
     main = "main.py",
     visibility = ["//visibility:public"],
-    deps = ["//separate_stubs/stubs"],
+    deps = [
+        "//separate_stubs/root_stubs",
+        "//separate_stubs/stubs",
+    ],
+)
+
+# A stub-only library with two import roots: its stubs must be importable through the shorter
+# one, too.
+py_binary(
+    name = "use_multi_root",
+    srcs = ["use_multi_root.py"],
+    main = "use_multi_root.py",
+    visibility = ["//visibility:public"],
+    deps = ["//separate_stubs/multi_root"],
 )
