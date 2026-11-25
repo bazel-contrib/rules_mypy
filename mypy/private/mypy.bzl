@@ -289,7 +289,7 @@ def mypy(
             ),
             # pass the dict[Label, Label] in parts because Bazel doesn't have
             # this kind of attr to pass naturally
-            "_types_keys": attr.label_list(default = types.keys()),
+            "_types_keys": attr.label_list(default = types.keys(), cfg = "exec"),
             "_types_values": attr.label_list(default = types.values()),
             "_suppression_tags": attr.string_list(default = suppression_tags or ["no-mypy"]),
             "_opt_in_tags": attr.string_list(default = opt_in_tags or []),
