@@ -1,0 +1,17 @@
+load("@rules_python//python:py_library.bzl", "py_library")
+
+genrule(
+    name = "generate_stubs",
+    outs = ["api.pyi"],
+    cmd = "echo 'API: int' > $@",
+)
+
+py_library(
+    name = "multi_root",
+    imports = [
+        ".",
+        "../..",
+    ],
+    pyi_srcs = [":generate_stubs"],
+    visibility = ["//visibility:public"],
+)
