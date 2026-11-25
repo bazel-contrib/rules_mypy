@@ -57,7 +57,7 @@ def managed_cache_dir(
 
 
 def run_mypy(
-    mypy_ini: Optional[str], cache_dir: str, srcs: list[str]
+    mypy_ini: Optional[str], cache_dir: str, srcs: list[str], extra_args: list[str]
 ) -> tuple[str, str, int]:
     maybe_config = ["--config-file", mypy_ini] if mypy_ini else []
     report, errors, status = mypy.api.run(
@@ -74,6 +74,7 @@ def run_mypy(
             # speedup
             "--fast-module-lookup",
         ]
+        + extra_args
         + srcs
     )
     if status:
@@ -91,8 +92,11 @@ def run(
     srcs: list[str],
 ) -> None:
     if len(srcs) > 0:
+        # Downstream actions merge this cache file by file, so it needs one file per
+        # module, not mypy's default SQLite database (mypy >= 1.20).
+        extra_args = [] if cache_dir is None else ["--no-sqlite-cache"]
         with managed_cache_dir(cache_dir, upstream_caches) as cache_dir:
-            report, errors, status = run_mypy(mypy_ini, cache_dir, srcs)
+            report, errors, status = run_mypy(mypy_ini, cache_dir, srcs, extra_args)
     else:
         report, errors, status = "", "", 0
 
