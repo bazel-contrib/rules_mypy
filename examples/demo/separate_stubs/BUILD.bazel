@@ -1,0 +1,12 @@
+load("@rules_python//python:py_binary.bzl", "py_binary")
+
+# The stubs of a generated module come from another package than the module itself, as with
+# protobuf's py_proto_library and separately generated .pyi files. mypy has to pick the stubs:
+# the generated module defines VALUE in a way mypy can't see.
+py_binary(
+    name = "main",
+    srcs = ["main.py"],
+    main = "main.py",
+    visibility = ["//visibility:public"],
+    deps = ["//separate_stubs/stubs"],
+)

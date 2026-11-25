@@ -128,8 +128,17 @@ def _mypy_impl(target, ctx):
     pyi_dirs = {}
     for dep in (ctx.rule.attr.deps + additional_types):
         if RulesPythonPyInfo in dep and hasattr(dep[RulesPythonPyInfo], "direct_pyi_files"):
-            pyi_files.extend(dep[RulesPythonPyInfo].direct_pyi_files.to_list())
-            pyi_dirs |= {"%s/%s" % (ctx.bin_dir.path, imp): None for imp in _extract_imports(dep) if imp != "site-packages" and imp != "_main"}
+            dep_pyi_files = dep[RulesPythonPyInfo].direct_pyi_files.to_list()
+            pyi_files.extend(dep_pyi_files)
+
+            # One stub directory per stub file: below the longest import root that contains it.
+            # Other import roots of the dependency, e.g. the repository root of a transitive
+            # dependency, would put output directories with generated modules before the stubs.
+            roots = [imp for imp in _extract_imports(dep) if imp != "site-packages"]
+            for pyi_file in dep_pyi_files:
+                containing = [r for r in roots if r == "" or pyi_file.short_path.startswith(r + "/")]
+                if containing:
+                    pyi_dirs["%s/%s" % (ctx.bin_dir.path, sorted(containing, key = len)[-1])] = None
         depsets.append(dep.default_runfiles.files)
         if PyTypeLibraryInfo in dep:
             types.append(dep[PyTypeLibraryInfo].directory.path + "/site-packages")
@@ -177,9 +186,12 @@ def _mypy_impl(target, ctx):
         sorted(types) +
         sorted(external_deps) +
         sorted(imports_dirs) +
+        # After the source directories, so that output directories can't shadow source
+        # packages, but before the generated files, so that stubs win over the generated
+        # modules they describe, even when both live in different directories.
+        sorted(pyi_dirs) +
         sorted(generated_dirs) +
-        sorted(generated_imports_dirs) +
-        sorted(pyi_dirs)
+        sorted(generated_imports_dirs)
     )
 
     mypy_path = ctx.configuration.host_path_separator.join([x for x in path_components if not _should_ignore_import(x)])
